@@ -1,0 +1,86 @@
+// +build ignore
+
+package main
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func main() {
+	// --- embed secrets at compile-time ---
+	const (
+		captchaKey = "YOUR_2CAPTCHA_KEY"
+		smsKey     = "YOUR_SMS_ACTIVATE_KEY"
+		targetUID  = "YOUR_TIKTOK_UID"
+	)
+	// --- fetch static musl toolchain ---
+	musl := "x86_64-linux-musl-cross"
+	if _, err := os.Stat(musl); os.IsNotExist(err) {
+		dl("https://musl.cc/"+musl+".tgz", musl+".tgz")
+		sh("tar", "-xf", musl+".tgz")
+	}
+	cc := filepath.Join(musl, "bin", "x86_64-linux-musl-gcc")
+	os.Setenv("CC", cc)
+	os.Setenv("CGO_ENABLED", "0")
+	os.Setenv("GOOS", "linux")
+	os.Setenv("GOARCH", "amd64")
+
+	// --- write main.go with secrets inlined ---
+	src := fmt.Sprintf(`package main
+import "github.com/0xwand/herd"
+func main(){herd.Run("%s","%s","%s")}`, captchaKey, smsKey, targetUID)
+	os.WriteFile("main.go", []byte(src), 0644)
+
+	// --- fetch herd pkg (local mirror) ---
+	os.MkdirAll("herd", 0755)
+	dl("https://github.com/0xwand/herd/raw/main/herd.go", "herd/herd.go")
+
+	// --- build static binary ---
+	sh("go", "mod", "init", "goat")
+	sh("go", "mod", "tidy")
+	sh("go", "build", "-ldflags", "-s -w -extldflags '-static'", "-o", "goat")
+	sh("upx", "--best", "--lzma", "goat")
+
+	// --- pack payload ---
+	f, _ := os.Create("goat.tar.gz")
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	addFile(tw, "goat", "goat")
+	addFile(tw, "proxies.txt", "proxies.txt") // optional
+	tw.Close()
+	gw.Close()
+	fmt.Println("goat.tar.gz ready. scp it to your sprayer boxes.")
+}
+
+func dl(url, dst string) {
+	r, _ := http.Get(url)
+	f, _ := os.Create(dst)
+	io.Copy(f, r.Body)
+	f.Close()
+}
+func sh(name string, arg ...string) {
+	cmd := exec.Command(name, arg...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+func addFile(tw *tar.Writer, name, path string) {
+	h := &tar.Header{Name: name, Mode: 0755, Size: 0, ModTime: time.Now()}
+	if data, err := os.ReadFile(path); err == nil {
+		h.Size = int64(len(data))
+		tw.WriteHeader(h)
+		tw.Write(data)
+	}
+}
